@@ -1,0 +1,51 @@
+Playbook para instalar e configurar um ambiente de MySQL, Flask e Apache
+Este playbook tem o objetivo de automatizar a instalação e configuração de um ambiente de MySQL, Flask e Apache em diferentes servidores. O ambiente consiste em um servidor de banco de dados (db) e um servidor Apache (apache).
+
+Pré-requisitos
+Ansible instalado no servidor onde o playbook será executado.
+Passos
+Instalar sshpass e criar diretórios:
+
+Instala o pacote sshpass necessário para estabelecer conexões SSH.
+Cria o diretório /home/lritzke/ansible no servidor local.
+Configurar MySQL no servidor db:
+
+Atualiza o sistema.
+Instala o pacote python3-mysqldb.
+Instala o pip (python3-pip).
+Instala o MySQL Server.
+Instala o pacote mysql-connector-python.
+Instala o pacote flask.
+Instala o pacote ufw para configurar o firewall.
+Permite tráfego nas portas 8001 e 3306.
+Configura o bind-address no arquivo mysqld.cnf.
+Cria um usuário no MySQL.
+Concede privilégios ao usuário no MySQL.
+Altera a senha do usuário.
+Limpa os privilégios no MySQL.
+Cria o banco de dados "customers".
+Cria as tabelas "register" e "service" no banco de dados.
+Concede todas as permissões ao usuário no banco de dados.
+Cria o diretório /home/lritzke/ansible/templates.
+Cria o arquivo submit.html no diretório de templates.
+Cria o arquivo app.py no diretório de templates.
+Instala o Python (python3 e python3-pip).
+Instalação do Apache e configuração da porta:
+
+Atualiza o sistema.
+Instala o Apache.
+Configura o arquivo de porta do Apache para ouvir na porta 3000.
+Reinicia o serviço do Apache.
+Verifica a conexão com o servidor Apache.
+Cria o diretório /etc/apache2/conf-available se não existir.
+Habilita o módulo SSL no Apache.
+Cria o arquivo index.html no diretório /var/www/html.
+Cria o diretório /var/www/html/servidor2.
+Cria o arquivo cadastro.html no diretório /var/www/html.
+Executando o playbook
+Certifique-se de que o Ansible está instalado no servidor onde você deseja executar o playbook.
+Crie um arquivo chamado playbook.yml e cole o conteúdo do playbook nele.
+No terminal, navegue até o diretório onde o arquivo playbook.yml está localizado.
+Execute o comando ansible-playbook playbook.yml para iniciar a execução do playbook.
+Aguarde até que o Ansible conclua a execução das tarefas em todos os servidores.
+Após a execução bem-sucedida do playbook, o ambiente de MySQL, Flask e Apache estará configurado e pronto para uso nos servidores especificados. Certifique-se de acessar as URLs corretas para interagir com as aplicações.

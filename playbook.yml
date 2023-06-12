@@ -1,0 +1,599 @@
+--- 
+- name: Instalar sshpass e criar diretórios 
+  hosts: localhost 
+  become: true 
+  vars: 
+    ansible_dir: /home/lritzke/ansible 
+  tasks: 
+
+    - name: Instalar sshpass 
+      apt: 
+        name: sshpass 
+        state: present 
+  
+    - name: Criar diretório ansible 
+      file: 
+        path: "{{ ansible_dir }}" 
+        state: directory 
+  
+- name: Configurar MySQL no servidor db 
+  hosts: db 
+  become: true 
+  vars: 
+    mysql_user: "lritzke" 
+    mysql_password: "lritzke" 
+    mysql_root_password: "lritzke" 
+  tasks: 
+    
+    - name: Atualizar o sistema
+      raw: dpkg --configure -a && apt update && apt upgrade -y
+
+    - name: Instalar o python3  
+      apt: 
+        name: python3-mysqldb
+        state: present 
+
+    - name: Instalar o pip
+      apt:
+        name: python3-pip
+        state: present
+
+    - name: Instalar o mysql-server
+      apt:
+        name: mysql-server
+        state: present
+
+    - name: Instalar mysql-connector-python 
+      pip: 
+        name: mysql-connector-python 
+        state: present 
+
+    - name: Instalar flask
+      pip:
+        name: flask
+        state: present
+  
+    - name: Instalar ufw 
+      apt: 
+        name: ufw 
+        state: present 
+
+    - name: Permitir tráfego nas portas 8001 e 3306 
+      ufw: 
+        rule: allow 
+        port: "{{ item }}" 
+        comment: "{{ item }}" 
+        state: enabled 
+      loop: 
+        - 8001 
+        - 3306 
+
+    - name: Configurar bind-address no mysqld.cnf 
+      replace: 
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf 
+        regexp: "^bind-address.*" 
+        replace: "bind-address = 0.0.0.0" 
+
+    - name: Criar usuário no MySQL 
+      mysql_user: 
+        name: "lritzke" 
+        password: "lritzke" 
+        login_user: root 
+        login_password: "lritzke" 
+        state: present 
+
+    - name: Dar privilégios ao usuário no MySQL 
+      mysql_user: 
+        name: "lritzke@localhost" 
+        login_user: root 
+        login_password: "lritzke" 
+        priv: "*.*:ALL,GRANT" 
+        state: present 
+
+    - name: Executar comando ALTER USER
+      become: true
+      mysql_user:
+        login_user: root
+        login_password: "lritzke"
+        name: lritzke
+        host: localhost
+        password: ""
+        update_password: always
+
+
+    - name: Limpar privilégios no MySQL 
+      mysql_query: 
+        login_user: root 
+        login_password: "lritzke" 
+        query: "FLUSH PRIVILEGES;" 
+  
+    - name: Criar banco de dados "customers"
+      mysql_db:
+        login_user: root
+        login_password: "lritzke"
+        name: customers
+        state: present
+
+    - name: Criar tabela "register"
+      mysql_query:
+        login_user: root
+        login_password: "lritzke"
+        query: |
+          CREATE TABLE customers.register (
+            service_id INT(11) NOT NULL AUTO_INCREMENT,
+            nome VARCHAR(255) NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            telefone VARCHAR(35) NOT NULL,
+            PRIMARY KEY (service_id)
+          )
+
+    - name: Criar tabela "service"
+      mysql_query:
+        login_user: root
+        login_password: "lritzke"
+        query: |
+          CREATE TABLE customers.service (
+            register_id INT(11) NOT NULL AUTO_INCREMENT,
+            dia VARCHAR(255) NOT NULL,
+            rua VARCHAR(255) NOT NULL,
+            cep VARCHAR(255) NOT NULL,
+            proprietario VARCHAR(255) NOT NULL,
+            PRIMARY KEY (register_id)
+          )
+
+    - name: Conceder todas as permissões ao usuário no banco de dados
+      become: true
+      mysql_user:
+        login_user: root
+        login_password: lritzke
+        name: lritzke
+        host: localhost
+        priv: '*.*:ALL'
+        append_privs: yes
+        state: present
+
+
+    - name: Criar diretório templates 
+      file: 
+        path: "/home/lritzke/ansible/templates" 
+        state: directory 
+      become: true
+      become_method: sudo 
+
+    - name: Criar arquivo submit.html 
+      copy: 
+        content: | 
+            <!DOCTYPE html>  
+            <html>  
+              <head>  
+                <meta charset="UTF-8">  
+                <title>Salvo com sucesso</title>  
+              </head>  
+              <body>  
+                <h1>Salvo com sucesso</h1>  
+              </body>  
+            </html> 
+        dest: /home/lritzke/ansible/templates/submit.html 
+
+    - name: Criar arquivo app.py
+      copy:
+        content: |
+            from flask import Flask, request, render_template, redirect
+            import mysql.connector
+
+            app = Flask(__name__, template_folder='/home/lritzke/ansible/templates')
+
+            mydb = mysql.connector.connect(
+                host="localhost",
+                port='3306',
+                user="lritzke",
+                password="lritzke",
+                database="customers"
+            )
+
+            def log_request_params():
+                app.logger.debug(f"Request args: {request.args}")
+
+            @app.route("/")
+            def index():
+                  return redirect('http://10.0.3.136:8000')
+
+            @app.route("/register", methods=["GET"])
+            def register():
+                if request.method == 'GET':
+                    log_request_params()
+                    nome = request.args.get("nome")
+                    email = request.args.get("email")
+                    telefone = request.args.get("telefone")
+
+                    app.logger.debug(f"Nome: {nome}, Email: {email}, Telefone: {telefone}")
+
+                    mycursor = mydb.cursor()
+
+                    sql = "INSERT INTO register (nome, email, telefone) VALUES (%s, %s, %s)"
+                    val = (nome, email, telefone)
+                    mycursor.execute(sql, val)
+                    mydb.commit()
+
+                    return redirect("http://10.0.3.136:8000")
+                else:
+                    return 'Método não permitido', 405
+
+            @app.route("/service", methods=["GET"])
+            def service():
+                if request.method == 'GET':
+                    log_request_params()
+                    dia = request.args.get("dia")
+                    rua = request.args.get("rua")
+                    cep = request.args.get("cep")
+                    proprietario = request.args.get("proprietario")
+
+                    app.logger.debug(f"Dia: {dia}, Rua: {rua}, CEP: {cep}, Proprietário: {proprietario}")
+
+                    mycursor = mydb.cursor()
+
+                    sql = "INSERT INTO service (dia, rua, cep, proprietario) VALUES (%s, %s, %s, %s)"
+                    val = (dia, rua, cep, proprietario)
+                    mycursor.execute(sql, val)
+                    mydb.commit()
+
+                    return render_template('submit.html')
+                else:
+                    return 'Método não permitido', 405
+
+            @app.route("/submit", methods=["GET"])
+            def submit():
+                return redirect("/register")
+
+            if __name__ == "__main__":
+                app.run(host="0.0.0.0", port=8001, debug=True)
+
+        dest: /home/lritzke/ansible/templates/app.py
+
+    - name: Instalar Python 
+      become: true 
+      apt: 
+        name: 
+          - python3 
+          - python3-pip 
+        state: latest 
+
+- name: Instalação do Apache e configuração da porta 
+  hosts: apache 
+  become: true 
+
+  tasks: 
+
+  - name: Atualizar sistema 
+    raw: apt update && apt upgrade -y 
+    become: true 
+
+  - name: Instalar o Apache 
+    apt: 
+      name: apache2 
+      state: present 
+    become: true 
+
+  - name: Configurar o arquivo de porta do Apache 
+    lineinfile: 
+      path: /etc/apache2/ports.conf 
+      regexp: '^Listen' 
+      line: 'Listen 3000' 
+
+  - name: Reiniciar o serviço do Apache 
+    service: 
+      name: apache2 
+      state: restarted 
+
+  - name: Testar a conexão com o servidor Apache 
+    wait_for: 
+      host: 127.0.0.1 
+      port: 3000 
+      state: started 
+      timeout: 5 
+
+  - name: Criar diretório conf-available se não existir 
+    file: 
+      path: /etc/apache2/conf-available 
+      state: directory 
+  
+  - name: Habilitar módulos no Apache 
+    become: true 
+    become_method: sudo  
+    command: a2enmod ssl 
+    ignore_errors: yes 
+
+  - name: Criar arquivo index.html
+    copy:
+      content: |
+        <!DOCTYPE html>
+        <html lang="pt-br">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Minha Loja de Jardinagem</title>
+          <style>
+            /* Estilos CSS para a página */
+            body {
+              font-family: Arial, sans-serif;
+              margin: 0;
+              padding: 0;
+            }
+            header {
+              background-color: #3c8f40;
+              padding: 20px;
+              color: #fff;
+            }
+            h1 {
+              margin: 0;
+            }
+            main {
+              padding: 20px;
+            }
+            footer {
+              background-color: #3c8f40;
+              padding: 20px;
+              color: #fff;
+              text-align: center;
+            }
+          </style>
+        </head>
+        <body>
+          <header>
+            <a href="http://10.0.3.136:8091" onclick="window.open('http://10.0.3.136:8091', '_blank'); window.close(); return false;">Register</a>
+            <a href="http://10.0.3.136:8092" onclick="window.open('http://10.0.3.136:8092', '_blank'); window.close(); return false;">Service</a>
+            <h1>Minha Loja de Jardinagem</h1>
+          </header>
+          <main>
+            <h2>Bem-vindo à Minha Loja de Jardinagem</h2>
+            <p>Somos especializados em fornecer produtos e serviços de jardinagem de alta qualidade para tornar seu jardim ainda mais bonito e saudável.</p>
+            <h3>Produtos</h3>
+            <ul>
+              <li>Sementes de flores e vegetais</li>
+              <li>Mudas de plantas</li>
+              <li>Ferramentas de jardinagem</li>
+              <li>Adubos e fertilizantes</li>
+              <li>Pesticidas e inseticidas</li>
+            </ul>
+            <h3>Serviços</h3>
+            <p>Nossa loja também oferece os seguintes serviços:</p>
+            <ul>
+              <li>Projeto e paisagismo de jardins</li>
+              <li>Manutenção de jardins</li>
+              <li>Consultoria em jardinagem</li>
+              <li>Cursos e workshops</li>
+            </ul>
+            <h3>Contato</h3>
+            <p>Estamos localizados na Rua dos Jardins, 123 - Cidade Verde.</p>
+            <p>Telefone: (XX) XXXX-XXXX</p>
+            <p>Email: info@minhalojadejardinagem.com</p>
+          </main>
+          <footer>
+            <p>&copy; 2023 Minha Loja de Jardinagem. Todos os direitos reservados.</p>
+          </footer>
+        </body>
+        </html>
+      dest: /var/www/html/index.html
+
+  - name: Criar um diretorio para o servidor2
+    file:
+      path: /var/www/html/servidor2
+      state: directory
+      mode: '0755'
+
+  - name: Criar arquivo cadastro.html
+    copy:
+      content: |
+
+        <!DOCTYPE html>
+        <html lang="pt-br">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Cadastro de Usuário</title>
+          <style>
+            /* Estilos CSS para a página */
+            body {
+              font-family: Arial, sans-serif;
+              margin: 0;
+              padding: 0;
+            }
+            form {
+              max-width: 400px;
+              margin: 20px auto;
+              padding: 20px;
+              border: 1px solid #ccc;
+              border-radius: 5px;
+            }
+            form h2 {
+              margin-top: 0;
+            }
+            form label {
+              display: block;
+              margin-bottom: 5px;
+            }
+            form input[type="text"],
+            form input[type="email"],
+            form input[type="tel"] {
+              width: 100%;
+              padding: 8px;
+              margin-bottom: 10px;
+              border: 1px solid #ccc;
+              border-radius: 4px;
+              box-sizing: border-box;
+            }
+            form button {
+              background-color: #3c8f40;
+              color: #fff;
+              padding: 10px 20px;
+              border: none;
+              border-radius: 4px;
+              cursor: pointer;
+            }
+          </style>
+        </head>
+        <header>
+          <a href="http://10.0.3.136:8000" onclick="window.open('http://10.0.3.136:8000', '_blank'); window.close(); return false;">Home</a>
+          <a href="http://10.0.3.136:8092" onclick="window.open('http://10.0.3.136:8092', '_blank'); window.close(); return false;">Service</a>
+        </header>
+        <body>
+        <form action="http://10.0.3.188:8001/register" method="get" onsubmit="return openNewWindow()">
+            <h2>Cadastro de Usuário</h2>
+            <label for="nome">Nome:</label>
+            <input type="text" id="nome" name="nome" required>
+            <label for="email">Email:</label>
+            <input type="email" id="email" name="email" required>
+            <label for="telefone">Telefone:</label>
+            <input type="tel" id="telefone" name="telefone" required>
+            <button type="submit">Cadastrar</button>
+          </form>
+          <script>
+              function openNewWindow() {
+                window.open("http://10.0.3.136:8000"); 
+                return true;
+              }
+          </script>
+        </body>
+        </html>
+      dest: /var/www/html/servidor2/index.html
+
+  - name: Criar um diretorio para o servidor3
+    file:
+      path: /var/www/html/servidor3
+      state: directory
+      mode: '0755'
+
+  - name: Criar arquivo contact_service.html
+    copy:
+      content: |
+        <!DOCTYPE html>
+        <html lang="pt-br">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Contato - Serviço de Jardinagem</title>
+          <style>
+            /* Estilos CSS para a página */
+            body {
+              font-family: Arial, sans-serif;
+              margin: 0;
+              padding: 0;
+            }
+            header {
+              background-color: #3c8f40;
+              padding: 20px;
+              color: #fff;
+            }
+            h1 {
+              margin: 0;
+            }
+            main {
+              padding: 20px;
+            }
+            form label {
+              display: block;
+              margin-bottom: 5px;
+            }
+            form input[type="text"] {
+              width: 100%;
+              padding: 8px;
+              margin-bottom: 10px;
+              border: 1px solid #ccc;
+              border-radius: 4px;
+              box-sizing: border-box;
+            }
+            form button {
+              background-color: #3c8f40;
+              color: #fff;
+              padding: 10px 20px;
+              border: none;
+              border-radius: 4px;
+              cursor: pointer;
+            }
+          </style>
+        </head>
+        <body>
+          <header>
+            <a href="http://10.0.3.136:8000" onclick="window.open('http://10.0.3.136:8000', '_blank'); return false;">Home</a>
+            <a href="http://10.0.3.136:8091" onclick="window.open('http://10.0.3.136:8091', '_blank'); return false;">Register</a>
+            <h1>Serviço de Jardinagem</h1>
+          </header>
+          <main>
+            <h2>Contate-nos</h2>
+            <p>Oferecemos uma ampla variedade de serviços de jardinagem para deixar seu jardim lindo e bem cuidado. Nossos serviços incluem:</p>
+            <ul>
+              <li>Projeto paisagístico</li>
+              <li>Manutenção e poda de plantas</li>
+              <li>Instalação de sistemas de irrigação</li>
+              <li>Controle de pragas e doenças</li>
+            </ul>
+            <p>Entre em contato conosco preenchendo o formulário abaixo:</p>
+            <form action="http://10.0.3.188:8001/service" method="get" onsubmit="return openNewWindow()">
+              <label for="dia">Dia Disponível:</label>
+              <input type="text" id="dia" name="dia" required>
+              <label for="rua">Rua:</label>
+              <input type="text" id="rua" name="rua" required>
+              <label for="cep">CEP:</label>
+              <input type="text" id="cep" name="cep" required>
+              <label for="proprietario">Nome do Proprietário:</label>
+              <input type="text" id="proprietario" name="proprietario" required>
+              <button type="submit">Enviar</button>
+            </form>
+            <script>
+                function openNewWindow(){
+                  window.open("http://10.0.3.136:8000");
+                }
+            </script>
+          </main>
+        </body>
+        </html>
+
+      dest: /var/www/html/servidor3/index.html
+
+  - name: Criar arquivo de configuracao do proxy reverso 
+    copy:
+      content: |
+              <VirtualHost *:8091>
+                  ServerName proxy.sv1_lritzke_servers
+
+                  DocumentRoot /var/www/html/servidor2
+
+                  ProxyPass /servidor2 http://10.0.3.136:8091/
+                  ProxyPassReverse /servidor2 http://10.0.3.136:8091/
+              </VirtualHost>
+
+              <VirtualHost *:8092>
+                  ServerName proxy.From_lritzke_servers
+
+                  DocumentRoot /var/www/html/servidor3
+
+                  ProxyPass /servidor3 http://10.0.3.136:8092/
+                  ProxyPassReverse /servidor3 http://10.0.3.136:8092/
+              </VirtualHost>
+      dest: "/etc/apache2/sites-available/proxy-reverso.conf"
+
+  - name: Adicionar linhas ao final do arquivo
+    lineinfile:
+      path: /etc/apache2/ports.conf
+      line: "{{ item }}"
+    with_items:
+      - "Listen 8091"
+      - "Listen 8092"
+
+  - name: corrigindo configuracoesA
+    shell: apachectl configtest
+    notify: Reiniciar Apache
+
+  - name: Habilitar módulo proxy reverso
+    command: a2enmod proxy
+    notify: Reiniciar Apache
+
+  - name: Habilitar o site do proxy reverso
+    command: a2ensite proxy-reverso.conf
+    notify: Reiniciar Apache
+
+  handlers:
+    - name: Reiniciar Apache
+      service:
+        name: apache2
+        state: restarted
